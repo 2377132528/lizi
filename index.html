@@ -443,7 +443,7 @@
 
       // Thumb (4 tip, 3 ip, 2 mcp) - check x distance relative to wrist
       // Simplified: Check if tip is extended away from palm
-      if (landmarks[4].x < landmarks[3].x) count++; // Assuming right hand mirrored
+      if (landmarks[4].x > landmarks[3].x) count++; // Assuming right hand mirrored
 
       // Index (8 tip, 6 pip)
       if (landmarks[8].y < landmarks[6].y) count++;
