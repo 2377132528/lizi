@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Christmas AR Particle Love</title>
+  <title>Christmas AR Particle Love - Enhanced (Permission-safe)</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Mountains+of+Christmas:wght@700&family=Noto+Sans+SC:wght@400;700&display=swap');
@@ -38,6 +38,7 @@
       opacity: 0.8;
       /* Slight dim for better particle visibility */
       filter: contrast(1.1) brightness(0.6);
+      display: none; /* hide until camera available */
     }
 
     /* Festive UI Overlay */
@@ -77,14 +78,32 @@
       animation: spin 1s linear infinite;
     }
 
-    @keyframes spin {
-      0% {
-        transform: rotate(0deg);
-      }
+    #camera-permission {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 20;
+      display: none;
+      pointer-events: auto;
+      text-align: center;
+      color: white;
+    }
 
-      100% {
-        transform: rotate(360deg);
-      }
+    #camera-permission button {
+      background: #e87371;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 8px;
+      color: white;
+      font-weight: 700;
+      margin-top: 12px;
+      cursor: pointer;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
     }
   </style>
 </head>
@@ -92,10 +111,19 @@
 <body>
 
   <!-- Webcam Video -->
-  <video id="video-element" playsinline></video>
+  <video id="video-element" playsinline autoplay muted></video>
 
   <!-- 3D Canvas -->
   <div id="canvas-container"></div>
+
+  <!-- Camera permission UI -->
+  <div id="camera-permission" class="glass-panel p-6">
+    <div id="camera-permission-msg">Trying to access camera...</div>
+    <div style="margin-top:12px;">
+      <button id="camera-retry">Retry Camera</button>
+    </div>
+    <div style="margin-top:8px; font-size:12px; opacity:0.9;">If you denied permission, please enable camera in your browser settings or use the page's "Retry Camera" button.</div>
+  </div>
 
   <!-- UI Overlay -->
   <div id="ui-layer">
@@ -108,9 +136,10 @@
           <li>✋ <b>5 Fingers:</b> 显示 "我" (Show "I")</li>
           <li>✌️ <b>2 Fingers:</b> 显示 "爱" (Show "Love")</li>
           <li>☝️ <b>1 Finger:</b> 显示 "你" (Show "You")</li>
-          <li>✊ <b>Default:</b> 圣诞树 (Christmas Tree)</li>
+          <li>🤏 <b>Pinch:</b> 心形 / Fireworks（按设置）</li>
+          <li>✊ <b>Default/Fist:</b> 圣诞树 (Christmas Tree)</li>
         </ul>
-        <p class="text-xs mt-2 text-yellow-300">👋 移动手指拨动粒子 (Touch to scatter particles)</p>
+        <p class="text-xs mt-2 text-yellow-300">👋 移动手指拨动粒子 (Touch to scatter particles) — 如果没有摄像头权限，改为鼠标/触控交互。</p>
       </div>
 
       <div id="loading-indicator" class="glass-panel p-3 flex items-center gap-3">
@@ -121,17 +150,16 @@
 
     <!-- Debug/Status -->
     <div class="text-center pb-4">
-      <div id="gesture-status"
-        class="inline-block glass-panel px-6 py-2 text-white text-xl font-bold christmas-text animate-pulse">
-        Waiting for Camera...
-      </div>
+      <div id="gesture-status" class="inline-block glass-panel px-6 py-2 text-white text-xl font-bold christmas-text animate-pulse">Waiting for Camera...</div>
     </div>
   </div>
 
   <!-- Libraries -->
   <!-- Three.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <!-- MediaPipe Hands -->
+  <!-- GPUComputationRenderer (examples) - optional experimental GPU mode -->
+  <script src="https://threejs.org/examples/js/GPUComputationRenderer.js"></script>
+  <!-- MediaPipe Hands (we'll load but only initialize when camera allowed) -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -146,449 +174,230 @@
       scatterForce: 0.2,
       returnSpeed: 0.05,
       colors: {
-        tree: [0x2d6a4f, 0x40916c, 0x52b788, 0xd8f3dc, 0xffd700, 0xc1121f], // Greens, Gold, Red
-        text: [0xff99c8, 0xfcf6bd, 0xd0f4de, 0xa9def9] // Pastels for text
-      }
+        tree: [0x2d6a4f, 0x40916c, 0x52b788, 0xd8f3dc, 0xffd700, 0xc1121f],
+        text: [0xff99c8, 0xfcf6bd, 0xd0f4de, 0xa9def9]
+      },
+      gestureStableFrames: 6,
+      pinchThreshold: 0.04,
+      enableGPUExperiment: false,
+      maxParticlesGPU: 100000
     };
 
     const state = {
-      currentGesture: 'tree', // tree, 5, 2, 1
+      currentGesture: 'tree',
+      gestureBuffer: [],
+      gestureSmoothed: 'tree',
       targetPoints: [],
       particles: [],
       handPosition: new THREE.Vector3(0, 0, 0),
+      handPositionSmoothed: new THREE.Vector3(0, 0, 0),
       isHandDetected: false,
       scale: 1.0,
-      snowflakes: []
+      snowflakes: [],
+      lastGestureChangeTime: performance.now(),
+      morphT: 1.0,
+      cameraEnabled: false
     };
 
-    // --- 2. THREE.JS SETUP ---
+    // --- Helper functions ---
+    function showPermissionUI(msg, show) {
+      const el = document.getElementById('camera-permission');
+      const msgEl = document.getElementById('camera-permission-msg');
+      if (msgEl) msgEl.innerText = msg;
+      el.style.display = show ? 'block' : 'none';
+    }
+
+    function setGestureStatus(text) {
+      const gs = document.getElementById('gesture-status');
+      if (gs) gs.innerText = text;
+    }
+
+    // --- 2. THREE.JS SETUP (unchanged) ---
     const container = document.getElementById('canvas-container');
     const scene = new THREE.Scene();
-    // No background color, let video show through
-
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.z = 10;
-
     const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(renderer.domElement);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); scene.add(ambientLight);
+    const pointLight = new THREE.PointLight(0xffaa00, 1, 50); pointLight.position.set(5, 5, 5); scene.add(pointLight);
 
-    // Lighting (for the tree aesthetic mostly)
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
-    scene.add(ambientLight);
-    const pointLight = new THREE.PointLight(0xffaa00, 1, 50);
-    pointLight.position.set(5, 5, 5);
-    scene.add(pointLight);
+    // --- 3. PARTICLE SYSTEM (kept same, minor safety guards) ---
+    function getTreePoints(count) { const points = []; for (let i = 0; i < count; i++) { const height = 9; const y = Math.random() * height - (height / 2); const radiusAtY = ((height / 2) - y) * 0.4; const angle = Math.random() * Math.PI * 2; const r = Math.sqrt(Math.random()) * radiusAtY; const x = r * Math.cos(angle); const z = r * Math.sin(angle); const isOrnament = Math.random() > 0.9; const color = isOrnament ? (Math.random() > 0.5 ? 0xc1121f : 0xffd700) : config.colors.tree[Math.floor(Math.random() * 3)]; points.push({ x, y, z, color }); } return points; }
+    function getTextPoints(text, count) { const canvas = document.createElement('canvas'); const ctx = canvas.getContext('2d'); const size = 256; canvas.width = size; canvas.height = size; ctx.fillStyle = '#000000'; ctx.fillRect(0, 0, size, size); ctx.fillStyle = '#ffffff'; ctx.font = 'bold 180px "Noto Sans SC"'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, size / 2, size / 2); const imageData = ctx.getImageData(0, 0, size, size); const data = imageData.data; const validPixels = []; for (let y = 0; y < size; y += 2) { for (let x = 0; x < size; x += 2) { const index = (y * size + x) * 4; if (data[index] > 128) { validPixels.push({ x: (x / size - 0.5) * 10, y: -(y / size - 0.5) * 10, z: 0 }); } } } const resultPoints = []; for (let i = 0; i < count; i++) { const pixel = validPixels[Math.floor(Math.random() * validPixels.length)] || { x: 0, y: 0, z: 0 }; resultPoints.push({ x: pixel.x, y: pixel.y, z: (Math.random() - 0.5) * 2, color: config.colors.text[Math.floor(Math.random() * config.colors.text.length)] }); } return resultPoints; }
+    function getHeartPoints(count) { const points = []; for (let i = 0; i < count; i++) { const t = Math.random() * Math.PI * 2; const u = Math.random(); const r = 1.5 * (1 - Math.sqrt(u)); const x = 16 * Math.pow(Math.sin(t), 3) / 16 * r * 1.2; const y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) / 16 * r * 1.2; const z = (Math.random() - 0.5) * 1.5; const color = config.colors.text[Math.floor(Math.random() * config.colors.text.length)]; points.push({ x, y, z, color }); } return points; }
 
-    // --- 3. PARTICLE SYSTEM GENERATION ---
+    const shapes = { 'tree': getTreePoints(config.particleCount), '5': getTextPoints('我', config.particleCount), '2': getTextPoints('爱', config.particleCount), '1': getTextPoints('你', config.particleCount), 'heart': getHeartPoints(config.particleCount) };
 
-    // Helper: Generate points for a 3D Cone (Christmas Tree)
-    function getTreePoints(count) {
-      const points = [];
-      for (let i = 0; i < count; i++) {
-        // Cone parametric logic
-        const height = 9; // Height of tree
-        const y = Math.random() * height - (height / 2); // Center y
-        const radiusAtY = ((height / 2) - y) * 0.4; // Taper towards top
-        const angle = Math.random() * Math.PI * 2;
-        const r = Math.sqrt(Math.random()) * radiusAtY; // Uniform distribution in circle
+    const geometry = new THREE.BufferGeometry(); let particleCount = config.particleCount;
+    let positions = new Float32Array(particleCount * 3); let colors = new Float32Array(particleCount * 3); let scales = new Float32Array(particleCount);
+    for (let i = 0; i < particleCount; i++) { const p = shapes.tree[i]; positions[i * 3] = p.x; positions[i * 3 + 1] = p.y; positions[i * 3 + 2] = p.z; const color = new THREE.Color(p.color); colors[i * 3] = color.r; colors[i * 3 + 1] = color.g; colors[i * 3 + 2] = color.b; scales[i] = 1.0; }
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage)); geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3).setUsage(THREE.DynamicDrawUsage)); geometry.setAttribute('scale', new THREE.BufferAttribute(scales, 1).setUsage(THREE.DynamicDrawUsage));
 
-        const x = r * Math.cos(angle);
-        const z = r * Math.sin(angle);
+    const material = new THREE.ShaderMaterial({ uniforms: { color: { value: new THREE.Color(0xffffff) } }, vertexShader: `attribute float scale; attribute vec3 color; varying vec3 vColor; void main() { vColor = color; vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 ); gl_PointSize = scale * ( 150.0 / - mvPosition.z ); gl_Position = projectionMatrix * mvPosition; }`, fragmentShader: `varying vec3 vColor; void main() { if ( length( gl_PointCoord - vec2( 0.5, 0.5 ) ) > 0.475 ) discard; gl_FragColor = vec4( vColor, 1.0 ); }`, transparent: true });
+    const particleSystem = new THREE.Points(geometry, material); scene.add(particleSystem);
 
-        // Add some "ornament" points that are slightly outside
-        const isOrnament = Math.random() > 0.9;
-        const color = isOrnament
-          ? (Math.random() > 0.5 ? 0xc1121f : 0xffd700) // Red or Gold
-          : config.colors.tree[Math.floor(Math.random() * 3)]; // Greens
+    const trailCount = 120; const trailGeo = new THREE.BufferGeometry(); const trailPos = new Float32Array(trailCount * 3); const trailCol = new Float32Array(trailCount * 3);
+    for (let i = 0; i < trailCount; i++) { trailPos[i * 3] = 0; trailPos[i * 3 + 1] = -100; trailPos[i * 3 + 2] = 0; trailCol[i * 3] = 1; trailCol[i * 3 + 1] = 0.6; trailCol[i * 3 + 2] = 0.8; }
+    trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3)); trailGeo.setAttribute('color', new THREE.BufferAttribute(trailCol, 3)); const trailMat = new THREE.PointsMaterial({ size: 0.12, vertexColors: true, transparent: true, opacity: 0.9 }); const trailSystem = new THREE.Points(trailGeo, trailMat); scene.add(trailSystem);
 
-        points.push({ x, y, z, color, originalX: x, originalY: y, originalZ: z });
-      }
-      return points;
-    }
+    const snowGeo = new THREE.BufferGeometry(); const snowCount = 200; const snowPos = new Float32Array(snowCount * 3); const snowVel = []; for (let i = 0; i < snowCount; i++) { snowPos[i * 3] = (Math.random() - 0.5) * 20; snowPos[i * 3 + 1] = Math.random() * 20 - 10; snowPos[i * 3 + 2] = (Math.random() - 0.5) * 10; snowVel.push({ x: (Math.random() - 0.5) * 0.05, y: -(Math.random() * 0.05 + 0.02) }); }
+    snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3)); const snowMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.2, transparent: true, opacity: 0.8 }); const snowSystem = new THREE.Points(snowGeo, snowMat); scene.add(snowSystem);
 
-    // Helper: Generate points from 2D Text
-    function getTextPoints(text, count) {
-      // 1. Create a temporary 2D canvas
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      const size = 256;
-      canvas.width = size;
-      canvas.height = size;
+    const fxCount = 600; const fxPos = new Float32Array(fxCount * 3); const fxVel = new Float32Array(fxCount * 3); const fxCol = new Float32Array(fxCount * 3);
+    for (let i = 0; i < fxCount; i++) { fxPos[i * 3] = 0; fxPos[i * 3 + 1] = -100; fxPos[i * 3 + 2] = 0; fxVel[i * 3] = fxVel[i * 3 + 1] = fxVel[i * 3 + 2] = 0; fxCol[i * 3] = fxCol[i * 3 + 1] = fxCol[i * 3 + 2] = 1; }
+    const fxGeo = new THREE.BufferGeometry(); fxGeo.setAttribute('position', new THREE.BufferAttribute(fxPos, 3)); fxGeo.setAttribute('color', new THREE.BufferAttribute(fxCol, 3)); const fxMat = new THREE.PointsMaterial({ size: 0.12, vertexColors: true, transparent: true }); const fxSystem = new THREE.Points(fxGeo, fxMat); scene.add(fxSystem);
 
-      // 2. Draw text
-      ctx.fillStyle = '#000000';
-      ctx.fillRect(0, 0, size, size);
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 180px "Noto Sans SC"';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, size / 2, size / 2);
+    const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2(); const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    function onPointerMove(event) { let clientX, clientY; if (event.touches && event.touches.length > 0) { clientX = event.touches[0].clientX; clientY = event.touches[0].clientY; } else { clientX = event.clientX; clientY = event.clientY; } pointer.x = (clientX / window.innerWidth) * 2 - 1; pointer.y = - (clientY / window.innerHeight) * 2 + 1; raycaster.setFromCamera(pointer, camera); const target = new THREE.Vector3(); raycaster.ray.intersectPlane(plane, target); if (target) { state.handPosition.copy(target); state.isHandDetected = true; } clearTimeout(window.interactionTimeout); window.interactionTimeout = setTimeout(() => { state.isHandDetected = false; }, 500); }
+    window.addEventListener('mousemove', onPointerMove); window.addEventListener('touchmove', onPointerMove);
 
-      // 3. Scan for white pixels
-      const imageData = ctx.getImageData(0, 0, size, size);
-      const data = imageData.data;
-      const validPixels = [];
+    // --- 6. MEDIAPIPE HAND TRACKING (init only after camera allowed) ---
+    const videoElement = document.getElementById('video-element'); const loadingIndicator = document.getElementById('loading-indicator'); const gestureStatus = document.getElementById('gesture-status');
 
-      for (let y = 0; y < size; y += 2) {
-        for (let x = 0; x < size; x += 2) {
-          const index = (y * size + x) * 4;
-          if (data[index] > 128) { // If pixel is bright
-            validPixels.push({
-              x: (x / size - 0.5) * 10, // Scale to world units
-              y: -(y / size - 0.5) * 10, // Flip Y
-              z: 0
-            });
-          }
-        }
-      }
-
-      // 4. Map to required particle count
-      const resultPoints = [];
-      for (let i = 0; i < count; i++) {
-        const pixel = validPixels[Math.floor(Math.random() * validPixels.length)] || { x: 0, y: 0, z: 0 };
-        // Add depth jitter
-        resultPoints.push({
-          x: pixel.x,
-          y: pixel.y,
-          z: (Math.random() - 0.5) * 2, // 3D depth for text
-          color: config.colors.text[Math.floor(Math.random() * config.colors.text.length)]
-        });
-      }
-      return resultPoints;
-    }
-
-    // Pre-calculate Targets
-    const shapes = {
-      'tree': getTreePoints(config.particleCount),
-      '5': getTextPoints("我", config.particleCount),
-      '2': getTextPoints("爱", config.particleCount),
-      '1': getTextPoints("你", config.particleCount)
-    };
-
-    // Create Particle Geometry
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(config.particleCount * 3);
-    const colors = new Float32Array(config.particleCount * 3);
-    const scales = new Float32Array(config.particleCount);
-
-    // Initialize as Tree
-    shapes.tree.forEach((p, i) => {
-      positions[i * 3] = p.x;
-      positions[i * 3 + 1] = p.y;
-      positions[i * 3 + 2] = p.z;
-
-      const color = new THREE.Color(p.color);
-      colors[i * 3] = color.r;
-      colors[i * 3 + 1] = color.g;
-      colors[i * 3 + 2] = color.b;
-
-      scales[i] = 1.0;
-    });
-
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geometry.setAttribute('scale', new THREE.BufferAttribute(scales, 1));
-
-    // Shader Material for Glowing Particles
-    const material = new THREE.ShaderMaterial({
-      uniforms: {
-        color: { value: new THREE.Color(0xffffff) },
-      },
-      vertexShader: `
-                attribute float scale;
-                attribute vec3 color;
-                varying vec3 vColor;
-                void main() {
-                    vColor = color;
-                    vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
-                    gl_PointSize = scale * ( 150.0 / - mvPosition.z );
-                    gl_Position = projectionMatrix * mvPosition;
-                }
-            `,
-      fragmentShader: `
-                varying vec3 vColor;
-                void main() {
-                    if ( length( gl_PointCoord - vec2( 0.5, 0.5 ) ) > 0.475 ) discard;
-                    gl_FragColor = vec4( vColor, 1.0 );
-                }
-            `,
-      transparent: true
-    });
-
-    const particleSystem = new THREE.Points(geometry, material);
-    scene.add(particleSystem);
-
-    // --- 4. SNOW SYSTEM ---
-    const snowGeo = new THREE.BufferGeometry();
-    const snowCount = 200;
-    const snowPos = new Float32Array(snowCount * 3);
-    const snowVel = []; // Velocities
-
-    for (let i = 0; i < snowCount; i++) {
-      snowPos[i * 3] = (Math.random() - 0.5) * 20;
-      snowPos[i * 3 + 1] = Math.random() * 20 - 10;
-      snowPos[i * 3 + 2] = (Math.random() - 0.5) * 10;
-      snowVel.push({
-        x: (Math.random() - 0.5) * 0.05,
-        y: -(Math.random() * 0.05 + 0.02)
-      });
-    }
-    snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
-    const snowMat = new THREE.PointsMaterial({
-      color: 0xffffff,
-      size: 0.2,
-      transparent: true,
-      opacity: 0.8
-    });
-    const snowSystem = new THREE.Points(snowGeo, snowMat);
-    scene.add(snowSystem);
-
-    // --- 5. INTERACTION LOGIC (MOUSE/HAND REPULSION) ---
-    const raycaster = new THREE.Raycaster();
-    const pointer = new THREE.Vector2();
-    const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0); // Plane at z=0
-
-    // Handle Mouse/Touch Input
-    function onPointerMove(event) {
-      // Calculate pointer position in normalized device coordinates (-1 to +1)
-      let clientX, clientY;
-
-      if (event.touches && event.touches.length > 0) {
-        clientX = event.touches[0].clientX;
-        clientY = event.touches[0].clientY;
-      } else {
-        clientX = event.clientX;
-        clientY = event.clientY;
-      }
-
-      pointer.x = (clientX / window.innerWidth) * 2 - 1;
-      pointer.y = - (clientY / window.innerHeight) * 2 + 1;
-
-      // Project pointer to 3D space on z=0 plane
-      raycaster.setFromCamera(pointer, camera);
-      const target = new THREE.Vector3();
-      raycaster.ray.intersectPlane(plane, target);
-      if (target) {
-        state.handPosition.copy(target);
-        state.isHandDetected = true;
-      }
-
-      // Reset "hand detected" timeout to auto-hide effect
-      clearTimeout(window.interactionTimeout);
-      window.interactionTimeout = setTimeout(() => {
-        state.isHandDetected = false;
-      }, 500);
-    }
-
-    window.addEventListener('mousemove', onPointerMove);
-    window.addEventListener('touchmove', onPointerMove);
-
-    // --- 6. MEDIAPIPE HAND TRACKING ---
-    const videoElement = document.getElementById('video-element');
-    const loadingIndicator = document.getElementById('loading-indicator');
-    const gestureStatus = document.getElementById('gesture-status');
+    let hands = null; let cameraUtils = null;
 
     function onResults(results) {
       loadingIndicator.style.display = 'none';
-
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
         const landmarks = results.multiHandLandmarks[0];
-
-        // 1. Detect Fingers for Gesture Switching
-        const fingerCount = countFingers(landmarks);
-
-        let newGesture = 'tree';
-        let displayText = "Christmas Tree";
-
-        if (fingerCount === 5) {
-          newGesture = '5';
-          displayText = "我 (I)";
-        } else if (fingerCount === 2) {
-          newGesture = '2';
-          displayText = "爱 (Love)";
-        } else if (fingerCount === 1) {
-          newGesture = '1';
-          displayText = "你 (You)";
-        }
-
-        if (state.currentGesture !== newGesture) {
-          state.currentGesture = newGesture;
-          gestureStatus.innerText = displayText;
-        }
-
-        // 2. Hand Position for Physics (Map Index finger tip to 3D space)
-        // Note: Video is mirrored, coordinates are 0-1
-        const indexTip = landmarks[8];
-
-        // Simple mapping: (0,0) top-left -> 3D coords
-        // Since camera is at z=10, screen width ~14 units at z=0
-        const x = (0.5 - indexTip.x) * 15;
-        const y = (0.5 - indexTip.y) * 10;
-
-        state.handPosition.set(x, y, 0);
-        state.isHandDetected = true;
-
+        const fingerCount = countFingers(landmarks); const isPinch = detectPinch(landmarks); let newGesture = 'tree'; let displayText = 'Christmas Tree';
+        if (isPinch) { newGesture = 'pinch'; displayText = 'Pinch (Heart/Fireworks)'; }
+        else if (fingerCount === 5) { newGesture = '5'; displayText = '我 (I)'; }
+        else if (fingerCount === 2) { newGesture = '2'; displayText = '爱 (Love)'; }
+        else if (fingerCount === 1) { newGesture = '1'; displayText = '你 (You)'; }
+        else if (fingerCount === 0) { newGesture = 'tree'; displayText = 'Christmas Tree'; }
+        state.gestureBuffer.push(newGesture); if (state.gestureBuffer.length > config.gestureStableFrames) state.gestureBuffer.shift(); const majority = mode(state.gestureBuffer);
+        if (majority && majority !== state.gestureSmoothed) { state.gestureSmoothed = majority; state.lastGestureChangeTime = performance.now(); startGestureTransition(majority); setGestureStatus(displayText); }
+        const indexTip = landmarks[8]; const x = (0.5 - indexTip.x) * 15; const y = (0.5 - indexTip.y) * 10; state.handPosition.set(x, y, 0); state.isHandDetected = true;
       } else {
-        // No hands, maybe fallback to tree after delay
-        // But keep physics if mouse is moving
+        // no hand detected this frame
       }
     }
 
-    function countFingers(landmarks) {
-      // Simple logic: Is finger tip higher (y value lower) than PIP joint?
-      // Thumb is X-axis based check
-      let count = 0;
+    function mode(arr) { if (!arr.length) return null; const counts = {}; arr.forEach(x => counts[x] = (counts[x] || 0) + 1); let max = 0, key = null; for (const k in counts) if (counts[k] > max) { max = counts[k]; key = k; } return key; }
+    function detectPinch(landmarks) { const dx = landmarks[4].x - landmarks[8].x; const dy = landmarks[4].y - landmarks[8].y; const dist = Math.sqrt(dx * dx + dy * dy); return dist < config.pinchThreshold; }
+    function countFingers(landmarks) { let count = 0; if (landmarks[4].x > landmarks[3].x) count++; if (landmarks[8].y < landmarks[6].y) count++; if (landmarks[12].y < landmarks[10].y) count++; if (landmarks[16].y < landmarks[14].y) count++; if (landmarks[20].y < landmarks[18].y) count++; return count; }
 
-      // Thumb (4 tip, 3 ip, 2 mcp) - check x distance relative to wrist
-      // Simplified: Check if tip is extended away from palm
-      if (landmarks[4].x > landmarks[3].x) count++; // Assuming right hand mirrored
-
-      // Index (8 tip, 6 pip)
-      if (landmarks[8].y < landmarks[6].y) count++;
-      // Middle (12 tip, 10 pip)
-      if (landmarks[12].y < landmarks[10].y) count++;
-      // Ring (16 tip, 14 pip)
-      if (landmarks[16].y < landmarks[14].y) count++;
-      // Pinky (20 tip, 18 pip)
-      if (landmarks[20].y < landmarks[18].y) count++;
-
-      return count;
+    // Safe camera initialization: try getUserMedia first to detect permission errors and provide fallback
+    async function requestCameraAccess() {
+      showPermissionUI('Requesting camera permission... Please allow camera access.', true);
+      try {
+        // Try to get a small video stream to check permission
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        // we got permission — stop tracks (MediaPipe Camera will reopen properly)
+        stream.getTracks().forEach(t => t.stop());
+        showPermissionUI('', false);
+        return true;
+      } catch (err) {
+        console.warn('Camera access failed:', err);
+        // Show friendly UI and fallback
+        const msg = (err && err.name === 'NotAllowedError') ? 'Camera permission denied. Please enable camera in browser settings or click Retry.' : 'Unable to access camera. Using mouse fallback.';
+        showPermissionUI(msg, true);
+        setGestureStatus('Camera blocked — using mouse/ touch fallback');
+        return false;
+      }
     }
 
-    const hands = new Hands({
-      locateFile: (file) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    async function initHandsAndCamera() {
+      const allowed = await requestCameraAccess();
+      if (!allowed) {
+        state.cameraEnabled = false;
+        document.getElementById('video-element').style.display = 'none';
+        // leave mouse/touch interaction enabled (already attached)
+        return;
       }
+
+      // Now initialize MediaPipe Hands and Camera (safe to start)
+      state.cameraEnabled = true;
+      document.getElementById('video-element').style.display = 'block';
+
+      hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+      hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+      hands.onResults(onResults);
+
+      try {
+        cameraUtils = new Camera(videoElement, {
+          onFrame: async () => { try { await hands.send({ image: videoElement }); } catch (e) { console.warn('hands.send error', e); }
+          },
+          width: 1280,
+          height: 720
+        });
+        cameraUtils.start();
+        setGestureStatus('Camera active — show your hand');
+      } catch (err) {
+        console.warn('Failed to start MediaPipe Camera:', err);
+        setGestureStatus('Failed to start camera — using mouse fallback');
+        state.cameraEnabled = false;
+        document.getElementById('video-element').style.display = 'none';
+        showPermissionUI('Failed to start camera. Using fallback controls.', true);
+      }
+    }
+
+    document.getElementById('camera-retry').addEventListener('click', async () => {
+      showPermissionUI('Retrying camera permission...', true);
+      await initHandsAndCamera();
     });
 
-    hands.setOptions({
-      maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
-    });
+    // Start initialization (do not block page)
+    initHandsAndCamera();
 
-    hands.onResults(onResults);
+    // --- Gesture transition & explosion functions (unchanged) ---
+    function startGestureTransition(gesture) { let s = shapes.tree; if (gesture === '5') s = shapes['5']; else if (gesture === '2') s = shapes['2']; else if (gesture === '1') s = shapes['1']; else if (gesture === 'pinch') s = shapes['heart']; state.targetPoints = s; state.morphT = 0.0; }
+    function triggerExplosion(x, y, z = 0) { for (let i = 0; i < fxCount; i++) { const angle = Math.random() * Math.PI * 2; const speed = Math.random() * 4 + 0.5; fxVel[i * 3] = Math.cos(angle) * speed * (Math.random() * 1.5); fxVel[i * 3 + 1] = Math.sin(angle) * speed * (Math.random() * 1.5); fxVel[i * 3 + 2] = (Math.random() - 0.5) * 2; fxPos[i * 3] = x; fxPos[i * 3 + 1] = y; fxPos[i * 3 + 2] = z; fxCol[i * 3] = Math.random(); fxCol[i * 3 + 1] = Math.random(); fxCol[i * 3 + 2] = Math.random(); } fxGeo.attributes.position.needsUpdate = true; fxGeo.attributes.color.needsUpdate = true; }
 
-    // Start Camera
-    const cameraUtils = new Camera(videoElement, {
-      onFrame: async () => {
-        await hands.send({ image: videoElement });
-      },
-      width: 1280,
-      height: 720
-    });
-    cameraUtils.start();
-
-
-    // --- 7. MAIN ANIMATION LOOP ---
+    // --- 7. MAIN ANIMATION LOOP (keeps working in fallback mode) ---
     const clock = new THREE.Clock();
-
     function animate() {
       requestAnimationFrame(animate);
       const dt = clock.getDelta();
       const time = clock.getElapsedTime();
+      state.handPositionSmoothed.lerp(state.handPosition, 0.2);
 
-      const positionsAttribute = geometry.attributes.position;
-      const targetShape = shapes[state.currentGesture];
+      const trailAttr = trailGeo.attributes.position;
+      for (let i = trailCount - 1; i > 0; i--) {
+        trailAttr.array[i * 3] = trailAttr.array[(i - 1) * 3];
+        trailAttr.array[i * 3 + 1] = trailAttr.array[(i - 1) * 3 + 1];
+        trailAttr.array[i * 3 + 2] = trailAttr.array[(i - 1) * 3 + 2];
+      }
+      trailAttr.array[0] = state.handPositionSmoothed.x; trailAttr.array[1] = state.handPositionSmoothed.y; trailAttr.array[2] = state.handPositionSmoothed.z;
+      trailAttr.needsUpdate = true;
 
-      // 1. Update Particles
-      for (let i = 0; i < config.particleCount; i++) {
-        // Current Position
-        let px = positionsAttribute.getX(i);
-        let py = positionsAttribute.getY(i);
-        let pz = positionsAttribute.getZ(i);
+      const positionsAttr = geometry.attributes.position; const colorAttr = geometry.attributes.color; const scaleAttr = geometry.attributes.scale;
+      if (state.morphT < 1.0) { state.morphT = Math.min(1.0, state.morphT + dt * 1.2); }
+      const target = state.targetPoints.length ? state.targetPoints : shapes.tree;
 
-        // Target Position (from shape definition)
-        // Use Modulo to wrap around if target has fewer points than particles
-        const targetIndex = i % targetShape.length;
-        const tx = targetShape[targetIndex].x;
-        const ty = targetShape[targetIndex].y;
-        const tz = targetShape[targetIndex].z;
-
-        // Color Morphing
-        const targetColorHex = targetShape[targetIndex].color;
-        const targetColor = new THREE.Color(targetColorHex);
-        const currentColor = new THREE.Color().fromBufferAttribute(geometry.attributes.color, i);
-        currentColor.lerp(targetColor, 0.05); // Smooth color transition
-        geometry.attributes.color.setXYZ(i, currentColor.r, currentColor.g, currentColor.b);
-
-        // Movement Logic:
-        // Calculate vector to target
-        let vx = (tx - px) * 0.05; // Base speed to target
-        let vy = (ty - py) * 0.05;
-        let vz = (tz - pz) * 0.05;
-
-        // Add slight noise for "Twinkle" / Alive feel
-        vx += (Math.random() - 0.5) * 0.01;
-        vy += (Math.random() - 0.5) * 0.01;
-
-        // INTERACTION: Repel from Hand/Mouse
+      for (let i = 0; i < particleCount; i++) {
+        const px = positionsAttr.getX(i); const py = positionsAttr.getY(i); const pz = positionsAttr.getZ(i);
+        const tIndex = i % target.length; const tx = target[tIndex].x; const ty = target[tIndex].y; const tz = target[tIndex].z || 0;
+        const mix = 0.05 * (0.2 + state.morphT);
+        let vx = (tx - px) * mix; let vy = (ty - py) * mix; let vz = (tz - pz) * mix;
+        vx += (Math.random() - 0.5) * 0.01; vy += (Math.random() - 0.5) * 0.01;
         if (state.isHandDetected) {
-          const dx = px - state.handPosition.x;
-          const dy = py - state.handPosition.y;
-          const dz = pz - state.handPosition.z; // Include Z for 3D feel
-          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz); // 3D distance
-
-          if (dist < config.scatterRadius) {
-            const force = (config.scatterRadius - dist) / config.scatterRadius;
-            const repelX = (dx / dist) * force * 1.5;
-            const repelY = (dy / dist) * force * 1.5;
-            const repelZ = (dz / dist) * force * 1.5;
-
-            vx += repelX;
-            vy += repelY;
-            vz += repelZ;
-          }
+          const dx = px - state.handPositionSmoothed.x; const dy = py - state.handPositionSmoothed.y; const dz = pz - state.handPositionSmoothed.z; const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) + 0.0001; if (dist < config.scatterRadius) { const force = (config.scatterRadius - dist) / config.scatterRadius; vx += (dx / dist) * force * 1.5; vy += (dy / dist) * force * 1.5; vz += (dz / dist) * force * 1.5; }
         }
-
-        // Apply Velocity
-        positionsAttribute.setXYZ(i, px + vx, py + vy, pz + vz);
-
-        // Twinkle Scale
-        const scale = 1.0 + Math.sin(time * 5 + i) * 0.3;
-        geometry.attributes.scale.setX(i, scale);
+        positionsAttr.setXYZ(i, px + vx, py + vy, pz + vz);
+        const tgtColor = target[tIndex].color || config.colors.text[Math.floor(Math.random() * config.colors.text.length)]; const tc = new THREE.Color(tgtColor); const cc = new THREE.Color().fromBufferAttribute(colorAttr, i); cc.lerp(tc, 0.03); colorAttr.setXYZ(i, cc.r, cc.g, cc.b);
+        const scale = 1.0 + Math.sin(time * 5 + i) * 0.3; scaleAttr.setX(i, scale);
       }
+      positionsAttr.needsUpdate = true; colorAttr.needsUpdate = true; scaleAttr.needsUpdate = true;
 
-      positionsAttribute.needsUpdate = true;
-      geometry.attributes.color.needsUpdate = true;
-      geometry.attributes.scale.needsUpdate = true;
+      const snowPosAttr = snowGeo.attributes.position; for (let i = 0; i < snowCount; i++) { let y = snowPosAttr.getY(i); y += snowVel[i].y; if (y < -10) { y = 10; snowPosAttr.setX(i, (Math.random() - 0.5) * 20); } snowPosAttr.setY(i, y); snowPosAttr.setX(i, snowPosAttr.getX(i) + Math.sin(time + i) * 0.01); } snowPosAttr.needsUpdate = true;
 
-      // 2. Update Snow
-      const snowPosAttr = snowGeo.attributes.position;
-      for (let i = 0; i < snowCount; i++) {
-        let y = snowPosAttr.getY(i);
-        y += snowVel[i].y;
+      for (let i = 0; i < fxCount; i++) { fxPos[i * 3] += fxVel[i * 3] * dt; fxPos[i * 3 + 1] += fxVel[i * 3 + 1] * dt - 0.5 * dt; fxPos[i * 3 + 2] += fxVel[i * 3 + 2] * dt; if (fxPos[i * 3 + 1] < -20) { fxPos[i * 3 + 1] = -100; } } fxGeo.attributes.position.needsUpdate = true;
 
-        // Reset if falls below screen
-        if (y < -10) {
-          y = 10;
-          snowPosAttr.setX(i, (Math.random() - 0.5) * 20);
-        }
-
-        snowPosAttr.setY(i, y);
-        snowPosAttr.setX(i, snowPosAttr.getX(i) + Math.sin(time + i) * 0.01); // Sway
-      }
-      snowPosAttr.needsUpdate = true;
-
-      // 3. Rotate Group slightly
       particleSystem.rotation.y = Math.sin(time * 0.2) * 0.1;
-
       renderer.render(scene, camera);
     }
-
-    // Resize Handler
-    window.addEventListener('resize', () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-
-    // Start Loop
+    window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
     animate();
 
+    // developer helpers
+    window.__STATE = state; window.__CONFIG = config; window.triggerExplosion = triggerExplosion;
+
+    setInterval(() => { if (state.gestureSmoothed === 'pinch') { triggerExplosion(state.handPositionSmoothed.x, state.handPositionSmoothed.y, 0); } }, 1200);
   </script>
 </body>
 
