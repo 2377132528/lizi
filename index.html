@@ -2,37 +2,73 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <title>3D 粒子 AR 系统 (最终修正版)</title>
+    <title>🎄 圣诞节 AR 粒子系统 🎅</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; }
+        body { margin: 0; overflow: hidden; background-color: #0c0c0c; font-family: 'Christmas', sans-serif; }
         
-        /* 视频全屏背景 (镜像翻转) */
+        /* 视频背景 */
         #input-video {
             position: fixed; top: 0; left: 0;
             width: 100%; height: 100%;
             object-fit: cover;
-            transform: scaleX(-1);
+            transform: scaleX(-1); /* 镜像 */
             z-index: 0;
-            opacity: 0.6; 
+            opacity: 0.5; /* 略微降低透明度，增强节日氛围感 */
         }
 
-        /* Canvas 覆盖层 */
+        /* Three.js Canvas */
         canvas { position: fixed; top: 0; left: 0; z-index: 1; pointer-events: none; }
 
+        /* UI 层 */
         #ui-layer {
             position: absolute; top: 20px; left: 20px; z-index: 10;
-            color: #fff; font-family: sans-serif;
-            text-shadow: 0 0 4px #000;
+            color: #e0f2f7; /* 淡蓝色 */
+            text-shadow: 0 0 5px rgba(0,0,0,0.8), 0 0 10px #ff6666; /* 红色阴影 */
+            background: rgba(12, 12, 12, 0.4);
+            padding: 15px 25px;
+            border-radius: 15px;
+            border: 2px solid #ff6666; /* 圣诞红边框 */
+            box-shadow: 0 0 15px rgba(255,102,102,0.8);
         }
-        h1 { margin: 0; font-size: 24px; color: #00ffff; letter-spacing: 1px; }
-        .info { font-size: 14px; opacity: 0.8; margin-top: 5px; }
+        h1 { margin: 0; font-size: 28px; color: #ff6666; letter-spacing: 2px; text-transform: uppercase; }
+        .info { font-size: 16px; opacity: 0.9; margin-top: 8px; color: #a8dadc; }
+        .highlight { color: #f2f7e0; font-weight: bold; } /* 雪白色 */
 
+        /* 加载提示 */
         #loading {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: #00ffff; font-size: 20px; z-index: 20;
-            background: rgba(0,0,0,0.8); padding: 20px 40px; border-radius: 8px;
-            border: 1px solid #00ffff;
+            color: #ff6666; font-size: 24px; z-index: 20;
+            background: rgba(0,0,0,0.8); padding: 25px 50px; border-radius: 12px;
+            border: 2px solid #a8dadc; /* 圣诞蓝边框 */
+            box-shadow: 0 0 20px rgba(168,218,220,0.8);
         }
+
+        /* 音乐播放按钮 (可选) */
+        #music-button {
+            position: fixed; bottom: 20px; right: 20px; z-index: 10;
+            background: rgba(255,102,102,0.8); /* 圣诞红 */
+            color: white;
+            border: 2px solid #a8dadc;
+            border-radius: 50%;
+            width: 50px; height: 50px;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 24px;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(255,102,102,0.5);
+            transition: all 0.3s ease;
+        }
+        #music-button:hover {
+            background: #ff4d4d;
+            box-shadow: 0 0 15px rgba(255,102,102,1);
+        }
+
+        /* 自定义字体（如果需要，请确保字体文件已导入或链接） */
+        /* @font-face {
+            font-family: 'Christmas';
+            src: url('path/to/ChristmasFont.ttf') format('truetype');
+            font-weight: normal;
+            font-style: normal;
+        } */
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
@@ -43,42 +79,59 @@
     <video id="input-video" playsinline></video>
 
     <div id="ui-layer">
-        <h1>AR 3D 粒子系统</h1>
-        <div class="info">🖐️ 手势 1/2/3 切换文字 | ☝️ 食指拨动粒子</div>
-        <div class="info" id="stats">粒子数: 正在计算...</div>
+        <h1>圣诞节 AR 魔法</h1>
+        <div class="info"><span class="highlight">🖐️ 双手张合：</span>控制粒子聚散</div>
+        <div class="info"><span class="highlight">✋ 手势 5/2/1：</span>切换文字 <span class="highlight">"我" / "爱" / "你"</span></div>
+        <div class="info"><span class="highlight">☝️ 食指拨动：</span>打散粒子效果</div>
+        <div class="info" id="stats">粒子数: 正在加载...</div>
     </div>
 
-    <div id="loading">正在生成高密度粒子...</div>
+    <div id="loading">正在准备圣诞魔法...</div>
 
+    <div id="music-button">
+        🎵
+    </div>
+    <audio id="christmas-music" loop src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"></audio>
     <script>
         // --- 核心配置 ---
         const CONFIG = {
-            maxParticles: 15000,  // 再次增加粒子上限
-            particleSize: 0.18,   // 提高尺寸确保可见性
-            textDepth: 8.0,       // 文字厚度
-            textLayers: 10,       // 厚度层数
-            colorBase: 0x00ffff, 
-            repelRadius: 6.0,     
-            repelForce: 3.5,      
-            returnSpeed: 0.08     
+            maxParticles: 20000,    // 粒子总量上限 (手机端适度，PC可更高)
+            particleSize: 0.18,     // 粒子尺寸
+            textDepth: 8.0,         // 文字厚度
+            textLayers: 10,         // 厚度层数
+            colorBase: 0x00ffff,    // 粒子基色（可调为圣诞色如 0xffd700 金色）
+            textScale: 0.15,        // 文字在3D场景中的大小 (0.15-0.25 较好)
+            repelRadius: 6.0,       // 手指拨动范围
+            repelForce: 3.5,        // 拨动力度
+            returnSpeed: 0.08,      // 粒子回归速度
+            opennessFactor: 20.0,   // 手掌张合影响粒子的强度 (Z轴扩散)
+            christmasLightCount: 100, // 圣诞树彩灯数量
+            christmasLightColors: [0xff0000, 0x00ff00, 0x0000ff, 0xffff00], // 彩灯颜色
         };
 
         let scene, camera, renderer, particles;
         let posArr, velocityArr; 
         let targetPositions = []; 
-        
         const shapeCache = {};
-        let currentText = "H";
+        let currentText = "我"; // 默认文字
 
-        let isHandDetected = false;
-        let handPos = new THREE.Vector3(0,0,0);
+        let hand1Pos = new THREE.Vector3(0,0,0);
+        let hand2Pos = new THREE.Vector3(0,0,0);
+        let handOpenness = 1.0; // 0 = 紧缩, 1 = 正常, >1 = 扩散
+        let isHand1Detected = false;
+        let isHand2Detected = false;
         let vWidth, vHeight; // 视口参数
+
+        // 圣诞树相关
+        let christmasTreeGroup;
+        let christmasLights = [];
 
         function init() {
             // 1. Three.js 基础设置
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
             camera.position.z = 30; 
+            camera.position.y = 5; // 稍微抬高视角看圣诞树
 
             renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
@@ -87,13 +140,18 @@
 
             updateViewport();
 
+            // 环境光
+            scene.add(new THREE.AmbientLight(0x404040, 2.0)); // 柔和的环境光
+            const pointLight = new THREE.PointLight(0xffffff, 1.5, 100);
+            pointLight.position.set(0, 20, 10);
+            scene.add(pointLight);
+
             // 2. 初始化粒子池
             const geometry = new THREE.BufferGeometry();
             posArr = new Float32Array(CONFIG.maxParticles * 3);
             velocityArr = new Float32Array(CONFIG.maxParticles * 3);
             const colors = new Float32Array(CONFIG.maxParticles * 3);
 
-            // 【关键修正】初始化粒子到随机位置，确保在相机近处
             for(let i=0; i<CONFIG.maxParticles; i++){
                 posArr[i*3]   = (Math.random() - 0.5) * 50;
                 posArr[i*3+1] = (Math.random() - 0.5) * 50;
@@ -122,45 +180,134 @@
             scene.add(particles);
 
             // 3. 预生成文字数据
-            generateShapeData("H");
-            generateShapeData("Hi");
-            generateShapeData("AI");
-            
-            // 初始应用
-            applyShape("H");
+            generateShapeData("我");
+            generateShapeData("爱");
+            generateShapeData("你");
+            applyShape("我");
 
-            // 4. 事件与循环
+            // 4. 添加圣诞节元素
+            createChristmasScene();
+
+            // 5. 事件与循环
             window.addEventListener('resize', onResize);
+            document.getElementById('music-button').addEventListener('click', toggleMusic);
             initMediaPipe();
             animate();
+        }
+
+        // --- 圣诞场景创建 ---
+        function createChristmasScene() {
+            christmasTreeGroup = new THREE.Group();
+            scene.add(christmasTreeGroup);
+
+            // 树干
+            const trunkGeometry = new THREE.CylinderGeometry(0.8, 1.2, 8, 8);
+            const trunkMaterial = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+            const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
+            trunk.position.y = -2; // 埋入地面
+            christmasTreeGroup.add(trunk);
+
+            // 树叶 (多层圆锥)
+            const snowTexture = new THREE.TextureLoader().load('https://threejs.org/examples/textures/crate.gif'); // 用个通用纹理模拟雪
+            snowTexture.wrapS = snowTexture.wrapT = THREE.RepeatWrapping;
+            snowTexture.repeat.set(4,4);
+
+            const snowMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, map: snowTexture, roughness: 0.5, metalness: 0.1 }); // 雪材质
+
+            for (let i = 0; i < 4; i++) {
+                const coneGeometry = new THREE.ConeGeometry(8 - i * 1.5, 6, 16);
+                const coneMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22 + i*0x111111, roughness: 0.7, metalness: 0.2 }); // 深绿色
+                const cone = new THREE.Mesh(coneGeometry, coneMaterial);
+                cone.position.y = i * 4 - 3;
+                christmasTreeGroup.add(cone);
+
+                // 在顶部添加雪帽
+                if(i > 0) { // 最底下那层不加雪
+                    const snowCapGeometry = new THREE.SphereGeometry(8 - i * 1.5 + 0.5, 16, 8, 0, Math.PI * 2, 0, Math.PI / 3); // 扁平的雪帽
+                    const snowCap = new THREE.Mesh(snowCapGeometry, snowMaterial);
+                    snowCap.position.y = i * 4 - 3 + 3; // 放在锥体顶部
+                    christmasTreeGroup.add(snowCap);
+                }
+            }
+
+            // 树顶之星
+            const starShape = new THREE.Shape();
+            starShape.moveTo(0, 1.5);
+            starShape.lineTo(0.5, 0);
+            starShape.lineTo(1.5, 0);
+            starShape.lineTo(0.8, -0.5);
+            starShape.lineTo(1.0, -1.5);
+            starShape.lineTo(0, -1.0);
+            starShape.lineTo(-1.0, -1.5);
+            starShape.lineTo(-0.8, -0.5);
+            starShape.lineTo(-1.5, 0);
+            starShape.lineTo(-0.5, 0);
+            starShape.lineTo(0, 1.5);
+            const starGeometry = new THREE.ShapeGeometry(starShape);
+            const starMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: 0.8 });
+            const star = new THREE.Mesh(starGeometry, starMaterial);
+            star.position.y = 15.5; // 树顶
+            star.scale.set(1.5, 1.5, 1.5);
+            christmasTreeGroup.add(star);
+
+
+            // 圣诞彩灯
+            const lightGeometry = new THREE.SphereGeometry(0.2, 8, 8);
+            for(let i=0; i<CONFIG.christmasLightCount; i++){
+                const color = CONFIG.christmasLightColors[Math.floor(Math.random() * CONFIG.christmasLightColors.length)];
+                const lightMaterial = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.8 });
+                const light = new THREE.Mesh(lightGeometry, lightMaterial);
+
+                // 随机放置在树的周围
+                const radius = Math.random() * 7 + 1; // 1-8 范围
+                const height = Math.random() * 16 - 2; // -2到14的树高
+                const angle = Math.random() * Math.PI * 2;
+
+                light.position.set(
+                    Math.cos(angle) * radius * (1 - height/16), // 越往上越窄
+                    height,
+                    Math.sin(angle) * radius * (1 - height/16)
+                );
+                christmasTreeGroup.add(light);
+                christmasLights.push(light);
+            }
+
+            christmasTreeGroup.position.set(20, 0, -10); // 放置在场景右侧偏后
+
+            // 地面雪地
+            const groundGeometry = new THREE.PlaneGeometry(100, 100);
+            const groundMaterial = new THREE.MeshStandardMaterial({ color: 0xe0f2f7, roughness: 0.8, metalness: 0.1 });
+            const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+            ground.rotation.x = -Math.PI / 2;
+            ground.position.y = -6.5;
+            scene.add(ground);
         }
 
         // --- 核心：生成 3D 立体文字点云 ---
         function generateShapeData(text) {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            const size = 400; // 提高分辨率，捕获更多细节
+            const size = 400; 
             canvas.width = size;
             canvas.height = size;
 
             ctx.fillStyle = '#000';
             ctx.fillRect(0,0,size,size);
             ctx.fillStyle = '#fff';
-            ctx.font = 'bold 200px Arial'; // 字体更大
+            ctx.font = 'bold 250px Arial'; // 字体更大
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(text, size/2, size/2);
 
             const data = ctx.getImageData(0,0,size,size).data;
             const points = [];
-
             const step = 2; // 采样步长
 
             for(let y=0; y<size; y+=step){
                 for(let x=0; x<size; x+=step){
                     if(data[(y*size+x)*4] > 128){
-                        const baseX = (x - size/2) * 0.1; // 调整缩放
-                        const baseY = -(y - size/2) * 0.1;
+                        const baseX = (x - size/2) * CONFIG.textScale; 
+                        const baseY = -(y - size/2) * CONFIG.textScale;
 
                         for(let l=0; l<CONFIG.textLayers; l++){
                             const zOffset = (l / CONFIG.textLayers) * CONFIG.textDepth - (CONFIG.textDepth/2);
@@ -192,31 +339,33 @@
         function animate() {
             requestAnimationFrame(animate);
 
-            const activeCount = Math.min(targetPositions.length, CONFIG.maxParticles);
-            
-            for(let i=0; i<CONFIG.maxParticles; i++){
+            const totalTargetPoints = targetPositions.length;
+            const activeParticles = CONFIG.maxParticles; 
+            const samplingStep = totalTargetPoints / activeParticles; 
+
+            for(let i=0; i < activeParticles; i++){
                 const ix = i*3;
                 const iy = i*3+1;
                 const iz = i*3+2;
 
-                if (i >= activeCount) {
-                    // 隐藏多余粒子
-                    posArr[ix] = 9999;
-                    continue; 
-                }
+                const sampledIndex = Math.floor(i * samplingStep);
+                const target = targetPositions[Math.min(sampledIndex, totalTargetPoints - 1)]; 
 
-                // 1. 获取目标位置
-                const target = targetPositions[i % targetPositions.length]; // 循环使用目标点
                 let tx = target.x;
                 let ty = target.y;
                 let tz = target.z;
 
+                // 1. 双手张合控制粒子扩散
+                // Z轴的扩散，让文字看起来更“深”或更“扁”
+                tx *= handOpenness;
+                ty *= handOpenness;
+                tz *= handOpenness * CONFIG.opennessFactor; // 影响Z轴扩散强度
 
                 // 2. 交互逻辑：手指斥力
-                if(isHandDetected) {
-                    const dx = posArr[ix] - handPos.x;
-                    const dy = posArr[iy] - handPos.y;
-                    const dz = posArr[iz] - handPos.z;
+                if(isHand1Detected) { // 只使用一只手进行拨动，另一只手参与张合计算
+                    const dx = posArr[ix] - hand1Pos.x;
+                    const dy = posArr[iy] - hand1Pos.y;
+                    const dz = posArr[iz] - hand1Pos.z;
                     
                     const distSq = dx*dx + dy*dy + dz*dz*0.2; 
 
@@ -224,7 +373,6 @@
                         const dist = Math.sqrt(distSq);
                         const force = (1 - dist/CONFIG.repelRadius) * CONFIG.repelForce;
                         
-                        // 施加斥力给速度
                         velocityArr[ix] += (dx/dist) * force;
                         velocityArr[iy] += (dy/dist) * force;
                         velocityArr[iz] += (dz/dist) * force * 2.0; 
@@ -236,12 +384,10 @@
                 velocityArr[iy] += (ty - posArr[iy]) * CONFIG.returnSpeed;
                 velocityArr[iz] += (tz - posArr[iz]) * CONFIG.returnSpeed;
 
-                // 阻尼 (摩擦力)
                 velocityArr[ix] *= 0.85;
                 velocityArr[iy] *= 0.85;
                 velocityArr[iz] *= 0.85;
 
-                // 更新位置
                 posArr[ix] += velocityArr[ix];
                 posArr[iy] += velocityArr[iy];
                 posArr[iz] += velocityArr[iz];
@@ -249,10 +395,16 @@
 
             particles.geometry.attributes.position.needsUpdate = true;
             
-            // 缓慢旋转整个粒子群，增强 3D 观察感
+            // 粒子群缓慢旋转
             particles.rotation.y = Math.sin(Date.now()*0.0005) * 0.1;
             particles.rotation.x = Math.sin(Date.now()*0.0003) * 0.05;
 
+            // 圣诞树彩灯闪烁
+            const time = Date.now() * 0.005;
+            christmasLights.forEach((light, index) => {
+                light.material.opacity = 0.6 + Math.sin(time + index) * 0.4; // 0.2 - 1.0 之间闪烁
+            });
+            
             renderer.render(scene, camera);
         }
 
@@ -262,37 +414,54 @@
             const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
             
             hands.setOptions({
-                maxNumHands: 1,
+                maxNumHands: 2, // 检测两只手
                 modelComplexity: 1,
                 minDetectionConfidence: 0.7,
                 minTrackingConfidence: 0.7
             });
 
             hands.onResults(results => {
+                isHand1Detected = false;
+                isHand2Detected = false;
+                handOpenness = 1.0; // 每次重置
+
                 if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0){
-                    isHandDetected = true;
-                    const lm = results.multiHandLandmarks[0];
+                    // 处理第一只手（用于拨动和计数）
+                    const lm1 = results.multiHandLandmarks[0];
+                    isHand1Detected = true;
+                    updateHandPosition(lm1[8], hand1Pos); // 食指指尖用于拨动
 
-                    // 1. 手指计数 (切换文字)
-                    const fingers = [8,12,16,20].map(tip => lm[tip].y < lm[tip-2].y);
-                    const count = fingers.filter(Boolean).length;
-
-                    if(count === 1 && currentText !== "H") applyShape("H");
-                    else if(count === 2 && currentText !== "Hi") applyShape("Hi");
-                    else if(count >= 3 && currentText !== "AI") applyShape("AI");
-
-                    // 2. 获取食指指尖位置用于拨动
-                    const x = (1 - lm[8].x) - 0.5; 
-                    const y = (1 - lm[8].y) - 0.5;
+                    const fingersUp1 = [8,12,16,20].map(tip => lm1[tip].y < lm1[tip-2].y);
+                    const thumbUp1 = lm1[4].x < lm1[3].x; // 简单判断右手拇指
+                    const count1 = fingersUp1.filter(Boolean).length + (thumbUp1 ? 1 : 0);
                     
-                    handPos.set(
-                        x * vWidth, 
-                        y * vHeight, 
-                        (lm[8].z * -10)
-                    );
+                    // 切换文字 (只用第一只手的手势)
+                    if(count1 === 5 && currentText !== "我") applyShape("我");
+                    else if(count1 === 2 && currentText !== "爱") applyShape("爱");
+                    else if(count1 === 1 && currentText !== "你") applyShape("你");
+
+                    // 如果检测到第二只手，计算双手张合
+                    if(results.multiHandLandmarks.length > 1){
+                        isHand2Detected = true;
+                        const lm2 = results.multiHandLandmarks[1];
+                        updateHandPosition(lm2[8], hand2Pos); // 记录第二只手食指
+
+                        // 计算双手食指尖距离，作为张合度
+                        const dist = hand1Pos.distanceTo(hand2Pos);
+                        
+                        // 映射距离到 0.5 (紧缩) - 2.0 (张开)
+                        const minHandsDist = 5; // 假设两手靠近时的最小距离
+                        const maxHandsDist = 30; // 假设两手张开时的最大距离
+                        
+                        let normalizedDist = (dist - minHandsDist) / (maxHandsDist - minHandsDist);
+                        normalizedDist = Math.max(0, Math.min(1, normalizedDist)); // 钳制在0-1
+
+                        handOpenness = 0.5 + normalizedDist * 1.5; // 0.5 到 2.0
+                    }
 
                 } else {
-                    isHandDetected = false;
+                    isHand1Detected = false;
+                    isHand2Detected = false;
                 }
             });
 
@@ -303,11 +472,25 @@
             
             cam.start().then(() => {
                 document.getElementById('loading').style.display = 'none';
+            }).catch(error => {
+                console.error("摄像头启动失败:", error); 
+                document.getElementById('loading').innerText = "摄像头启动失败，请检查权限和 HTTPS 环境。";
             });
         }
 
+        // 辅助函数：将 MediaPipe 归一化坐标映射到 Three.js 世界坐标
+        function updateHandPosition(lmPoint, targetVector) {
+            const x = (1 - lmPoint.x) - 0.5; // 镜像+居中
+            const y = (1 - lmPoint.y) - 0.5;
+            
+            targetVector.set(
+                x * vWidth, 
+                y * vHeight, 
+                (lmPoint.z * -10) // 简单深度映射
+            );
+        }
+
         function updateViewport() {
-            // 【关键修正】确保相机与视口对齐
             const vFOV = THREE.MathUtils.degToRad(camera.fov);
             vHeight = 2 * Math.tan(vFOV / 2) * camera.position.z;
             vWidth = vHeight * camera.aspect;
@@ -320,8 +503,20 @@
             updateViewport();
         }
 
+        // 音乐播放控制
+        function toggleMusic() {
+            const music = document.getElementById('christmas-music');
+            const button = document.getElementById('music-button');
+            if (music.paused) {
+                music.play();
+                button.innerHTML = '⏸️';
+            } else {
+                music.pause();
+                button.innerHTML = '🎵';
+            }
+        }
+
         init();
     </script>
 </body>
-
 </html>
